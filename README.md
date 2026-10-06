@@ -170,8 +170,8 @@ that requires PR review. See [org setup](#fast-forward-merge-org-setup).
 
 - **Inputs:** `app-client-id` (required; `vars.FF_MERGE_CLIENT_ID`), `merge-command` (default `/merge`), `arm-command`
   (default `/auto-merge`), `label` (default `auto-merge`), `require-approval` (default `true`), `maintainer-only`
-  (default `true`), `squash-authors` (default `the-marmack-renovate[bot]`; author logins whose PRs are squash-merged via the
-  API instead of fast-forwarded — see below).
+  (default `true`), `squash-authors` (default `the-marmack-renovate[bot]`; author logins whose PRs are squash-merged via
+  the API instead of fast-forwarded — see below).
 - **Renovate PRs (squash instead of fast-forward):** Renovate's shared preset arms the update types it does not
   automerge itself (majors, 0.x) with the `auto-merge` label, and `ff-merge` squash-merges PRs from the `squash-authors`
   logins rather than fast-forwarding: Renovate never rebases its branches onto the base (`rebaseWhen: conflicted`), so
@@ -312,22 +312,20 @@ Full example: [`examples/add-to-project.yaml`](examples/add-to-project.yaml).
 
 _Any repo._ Runs the org's self-hosted [Renovate](https://docs.renovatebot.com/) bot against **this repository only** —
 same "Renovate" App, same bot-side config and org preset from
-[`the-marmack/renovate-config`](https://github.com/the-marmack/renovate-config) — so each repo has its
-own schedule and its runs are parallel and independent of the org-wide loop, which grows longer with every repository it
-walks. The job checks out the config repository and hands `renovate-global.json5` to Renovate unchanged, then pins the
-run to the calling repository through the environment (autodiscover off, `repositories` = this repo). Beyond the cron,
-the caller listens for `issues: [edited]` and `pull_request: [edited]`: a human ticking a checkbox in the Dependency
-Dashboard issue or a Renovate PR body (rebase/retry, create rate-limited PRs, …) is a body edit, and the job runs
-Renovate immediately instead of at the next tick. Renovate's own body rewrites (a Bot sender) are filtered out so a run
-never triggers the next one, and edits to any other issue or PR skip the job. The merge model is the org bot's:
-API-created Verified commits, the App's pull-request ruleset bypass for squash-merging green in-policy PRs, one
-automerge per base branch per run. The App token is scoped to the calling repository, so the config repository must be
-public (it is).
+[`the-marmack/renovate-config`](https://github.com/the-marmack/renovate-config) — so each repo has its own schedule and
+its runs are parallel and independent of the org-wide loop, which grows longer with every repository it walks. The job
+checks out the config repository and hands `renovate-global.json5` to Renovate unchanged, then pins the run to the
+calling repository through the environment (autodiscover off, `repositories` = this repo). Beyond the cron, the caller
+listens for `issues: [edited]` and `pull_request: [edited]`: a human ticking a checkbox in the Dependency Dashboard
+issue or a Renovate PR body (rebase/retry, create rate-limited PRs, …) is a body edit, and the job runs Renovate
+immediately instead of at the next tick. Renovate's own body rewrites (a Bot sender) are filtered out so a run never
+triggers the next one, and edits to any other issue or PR skip the job. The merge model is the org bot's: API-created
+Verified commits, the App's pull-request ruleset bypass for squash-merging green in-policy PRs, one automerge per base
+branch per run. The App token is scoped to the calling repository, so the config repository must be public (it is).
 
 - **Inputs:** `app-client-id` (required; `vars.RENOVATE_CLIENT_ID`), `config-repository` (default
-  `the-marmack/renovate-config`), `config-ref` (default `main`), `config-file` (default
-  `renovate-global.json5`), `dry-run` (default empty = live; `extract`, `lookup` or `full`), `log-level` (default
-  `info`).
+  `the-marmack/renovate-config`), `config-ref` (default `main`), `config-file` (default `renovate-global.json5`),
+  `dry-run` (default empty = live; `extract`, `lookup` or `full`), `log-level` (default `info`).
 - **Secrets:** `app-private-key` — required (`secrets.RENOVATE_PRIVATE_KEY`).
 - **Permissions (caller grants):** none — the App token does the privileged work, so the caller sets `permissions: {}`.
 - **Triggers (the caller owns it):** `schedule` (hourly — Renovate automerges one PR per base branch per run, so the
@@ -367,11 +365,11 @@ language boundary** — every repo provides the same canonical tasks and the wor
 every toolchain installed from the same mise pins:
 
 - **mise tasks** — defined in a root `mise.toml`, or by the shared toolchain
-  ([`the-marmack/toolchain`](https://github.com/the-marmack/toolchain)) mounted as a submodule at
-  `.mise/`: `lint` (all check-mode static analysis: `prettier --check`, markdownlint, and for Go `go vet` /
-  `govulncheck`), `build`, `test` (emitting `coverage/cobertura-coverage.xml`, optionally `coverage/junit.xml`), and
-  `e2e`. Define only the tasks that do real work — CI discovers the task list and skips the rest; coverage is optional.
-  A repo with no mise config fails CI.
+  ([`the-marmack/toolchain`](https://github.com/the-marmack/toolchain)) mounted as a submodule at `.mise/`: `lint` (all
+  check-mode static analysis: `prettier --check`, markdownlint, and for Go `go vet` / `govulncheck`), `build`, `test`
+  (emitting `coverage/cobertura-coverage.xml`, optionally `coverage/junit.xml`), and `e2e`. Define only the tasks that
+  do real work — CI discovers the task list and skips the rest; coverage is optional. A repo with no mise config fails
+  CI.
 - **Toolchains** — no `setup-go` / `setup-node` / `setup-uv`: the language runtimes (Go, Node, Python, uv) and every dev
   CLI (goreleaser, cosign, syft, the linters, …) are installed from the mise pins, sha256-verified against `mise.lock`
   and restored from the mise cache, so CI, release and local runs use identical versions. The tasks install their own
@@ -405,8 +403,8 @@ copied caller works either way. Avoid `@main` except for short-lived testing.
 
 ## Fast-forward merge: org setup
 
-`merge.yaml` (the `/merge` + auto-merge flows) drives the `the-marmack/ff-merge` action; `merge-notice.yaml`
-posts the companion convention reminder. The one-time org setup (the "FF Merge" GitHub App, its ruleset bypass, and the
+`merge.yaml` (the `/merge` + auto-merge flows) drives the `the-marmack/ff-merge` action; `merge-notice.yaml` posts the
+companion convention reminder. The one-time org setup (the "FF Merge" GitHub App, its ruleset bypass, and the
 `FF_MERGE_CLIENT_ID` variable + `FF_MERGE_PRIVATE_KEY` secret) is documented in
 [`the-marmack/ff-merge`](https://github.com/the-marmack/ff-merge).
 
@@ -541,9 +539,9 @@ so an `actions` CodeQL pass is the whole surface. The `/merge` + auto-merge flow
 review-ack companion (`self-merge-review-ack.yaml`), the merge notice (`self-merge-notice.yaml`) and the per-repo
 Renovate run (`self-renovate.yaml`) dogfood the rest. That Renovate run is also this repo's own dependency automation
 (action SHA pins and the `.mise` submodule tag), on the org bot's config from
-[`the-marmack/renovate-config`](https://github.com/the-marmack/renovate-config). Validate a change to a
-reusable workflow by temporarily pointing a real consumer's caller at a feature branch or SHA (`@your-branch`) and
-opening a PR there.
+[`the-marmack/renovate-config`](https://github.com/the-marmack/renovate-config). Validate a change to a reusable
+workflow by temporarily pointing a real consumer's caller at a feature branch or SHA (`@your-branch`) and opening a PR
+there.
 
 ## Releasing this repo
 

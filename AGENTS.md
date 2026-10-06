@@ -5,11 +5,11 @@ apply; this layers the repo rules on top.
 
 ## What this repository is
 
-`github-workflows` is the-marmack's library of **reusable** GitHub Actions workflows. The product is the
-callable workflows in `.github/workflows/` — the ones other repositories invoke via
-`uses: the-marmack/github-workflows/.github/workflows/<name>.yaml@<ref>` — together with the copy-paste callers
-under `examples/`. release-please versions this library straight from the Conventional Commit history, so the commit
-**type** decides whether consumers ever receive a change.
+`github-workflows` is the-marmack's library of **reusable** GitHub Actions workflows. The product is the callable
+workflows in `.github/workflows/` — the ones other repositories invoke via
+`uses: the-marmack/github-workflows/.github/workflows/<name>.yaml@<ref>` — together with the copy-paste callers under
+`examples/`. release-please versions this library straight from the Conventional Commit history, so the commit **type**
+decides whether consumers ever receive a change.
 
 ## Commit types
 
@@ -36,6 +36,6 @@ injects license headers, auto-fixes and formats markdown, then lints — the sam
 keeps the tree clean and avoids a follow-up "fix lint"/"fix formatting" commit. Only commit once `mise run pr` passes
 and you have staged everything it changed. The tools (prettier, markdownlint-cli2, addlicense, actionlint, zizmor) are
 pinned by the shared toolchain submodule at `.mise/`
-([`the-marmack/toolchain`](https://github.com/the-marmack/toolchain)), loaded natively as
-`.mise/config.toml`; `git submodule update --init` then `mise install` fetches them. At toolchain v3.0.0 `mise run pr`
-ends by running `./commit.sh` if one exists, so an agent must run `mise run fmt` and `mise run lint` instead of `pr`.
+([`the-marmack/toolchain`](https://github.com/the-marmack/toolchain)), loaded natively as `.mise/config.toml`;
+`git submodule update --init` then `mise install` fetches them. At toolchain v3.0.0 `mise run pr` ends by running
+`./commit.sh` if one exists, so an agent must run `mise run fmt` and `mise run lint` instead of `pr`.
