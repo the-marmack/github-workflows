@@ -1,0 +1,16 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+#
+# github-workflows consumes the shared toolchain (the-marmack/toolchain)
+# as the .mise/ submodule: mise loads its config.toml natively as
+# .mise/config.toml (pinned tools, incl. actionlint + zizmor, and the [vars]
+# knob defaults), and this file selects the task files. A Markdown/YAML repo
+# with nothing to build or test includes only common/ -- no archetype -- and
+# the Makefile is a thin forwarder (.mise/common/include.mk). Repo-local tasks
+# live in tasks.toml (included after common so its lint redefinition wins).
+# There is nothing to pin here: the org Renovate bot
+# (the-marmack/renovate-config) bumps the submodule tag, which carries
+# every tool pin and its mise.lock.
+
+[task_config]
+includes = [".mise/common/tasks.toml", "tasks.toml"]

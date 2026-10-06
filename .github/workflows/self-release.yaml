@@ -1,0 +1,57 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# This repo's own release, dogfooding the reusable release workflow by local path.
+# With no .goreleaser.yaml it takes the non-Go path: release-please cuts the release
+# (release-type: simple), then -- because vanity-tags is true -- the vanity-tags job
+# moves the floating v1 / v1.1 tags that consumers of these reusable workflows pin.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  # Manual retrigger: a startup_failure run (e.g. org actions-policy rejection)
+  # creates no jobs, so GitHub refuses to re-run it -- dispatch fires a fresh run
+  # without needing another push to main.
+  workflow_dispatch:
+
+# Ceiling for the reusable workflow's release-please + goreleaser/docs/publish jobs.
+# GitHub resolves a reusable workflow's permissions statically at startup: it takes
+# the union of every job's declared permissions and ignores `if:`. So the caller
+# must grant what the goreleaser job declares (id-token / attestations /
+# artifact-metadata / packages) and what the docs job declares (pages) even though both are
+# skipped here (no .goreleaser.yaml, no zensical.toml) -- dropping them
+# startup_failures the whole run. No executed job realizes them at runtime:
+# release-please and publish declare their own narrower job-level permissions, and
+# the goreleaser and docs jobs never run.
+permissions:
+  # release-please cuts the release/tag; publish moves the vanity tags
+  contents: write
+  # release-please creates pr labels via the issues api
+  issues: write
+  # release-please opens the release pull request
+  pull-requests: write
+  # cosign keyless signing (goreleaser) + the docs job's Pages OIDC deploy
+  id-token: write
+  # github build-provenance attestation
+  attestations: write
+  # artifact storage record for the attestation
+  artifact-metadata: write
+  # push container images to ghcr (goreleaser dockers_v2, gated on a Dockerfile)
+  packages: write
+  # publish the docs site to GitHub Pages (docs job, gated on a zensical.toml)
+  pages: write
+
+jobs:
+  release:
+    uses: $/.github/workflows/release.yaml
+    with:
+      vanity-tags: true
+      # Author the release PR as the "FF Merge" App (not the default GITHUB_TOKEN)
+      # so its branch push emits workflow_run events. A GITHUB_TOKEN-authored push
+      # is silenced by GitHub's recursion guard, so the auto-merge in self-merge.yaml
+      # (keyed on workflow_run from CI / Security Analysis) never retriggers when the
+      # release PR's checks go green -- the PR then only merges on the hourly sweep.
+      app-client-id: ${{ vars.FF_MERGE_CLIENT_ID }}
+    secrets:
+      app-private-key: ${{ secrets.FF_MERGE_PRIVATE_KEY }}

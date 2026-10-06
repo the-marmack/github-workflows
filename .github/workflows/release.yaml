@@ -1,0 +1,498 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# Reusable release pipeline for any repo. Release-please watches main and keeps a
+# release PR current from the Conventional Commit history; when that PR merges it
+# cuts the GitHub release and vX.Y.Z tag. What happens next depends on the repo:
+#
+#   - A repo with a .goreleaser.yaml takes the `goreleaser` job: GoReleaser builds
+#     archives + checksums + SBOMs + keyless cosign signatures, Developer
+#     ID-signed + notarized darwin binaries (goreleaser `notarize.macos`, when the
+#     caller passes the `macos-*` secrets), an optional Homebrew cask, and a
+#     GitHub build-provenance attestation over checksums.txt (plus digests.txt
+#     when the repo publishes container images via docker_digest), then adopts
+#     and publishes the draft release.
+#   - A repo with a zensical.toml takes the `docs` job: it rebuilds the Zensical
+#     site (uv run zensical build) and publishes it to GitHub Pages. This is keyed
+#     off the same config-presence detection as the goreleaser path and is
+#     independent of it, so a repo can ship binaries AND publish docs from one
+#     release. Callers must grant `pages: write` for it (see the permissions note
+#     below); the consuming repo must also set Settings -> Pages -> GitHub Actions.
+#   - Every other repo's release is just the release-please cut. A committed dist/
+#     is verified for freshness in CI (reusable ci.yaml), not here.
+#
+# A final vanity-tags job, when the caller sets vanity-tags: true, moves the
+# floating major and minor tags (v1 and v1.1) that consumers pin -- it needs the
+# goreleaser job, so on the Go path the tags advance only after that job has
+# published the release, and on every other path (goreleaser skipped) it runs
+# straight after release-please.
+#
+# Detection is a single hashFiles output on the release-please job, because a
+# job-level `if:` runs before checkout and can't see the workspace. The two-pass
+# release-please + idempotent tag creation works for both draft (goreleaser) and
+# non-draft releases.
+#
+# Callers can gate follow-on work (docs publish, deploys, notifications) on the
+# workflow_call outputs below: release_created is truthy only when this run cut a
+# release, alongside the tag_name/sha/version/major/minor/patch it produced (all
+# empty otherwise). This lets a caller append a release-only job instead of, e.g.,
+# rebuilding docs on every push to main.
+#
+# The consuming repo provides release-please-config.json + .release-please-manifest.json.
+# Go repos add a .goreleaser.yaml (release-type: go, draft: true); Actions repos that
+# commit dist/ set vanity-tags: true so their @v1/@v1.1 consumers track each release.
+# Repos that publish docs add a zensical.toml plus pyproject.toml + uv.lock at the
+# repo root (the docs job renders docs/ with `uv run zensical build`).
+#
+# Runs via workflow_call from a thin caller (examples/release.yaml) that owns the
+# push trigger and grants the release permissions.
+name: Reusable Release
+
+on:
+  workflow_call:
+    inputs:
+      vanity-tags:
+        description: >-
+          Move the floating major and minor tags (v1 and v1.1) to the release commit, for any release type. Off by
+          default; set true for Actions/reusable repos whose consumers pin @v1.
+        required: false
+        default: false
+        type: boolean
+      app-client-id:
+        description: >-
+          Optional client id of a GitHub App used to author the release (e.g. vars.FF_MERGE_CLIENT_ID). When set (with
+          app-private-key) release-please authenticates as the App instead of the default GITHUB_TOKEN, so the release
+          PR's branch push is attributed to the App. Set this when workflow_run-keyed automation must fire for the
+          release PR: a push made with the default GITHUB_TOKEN does NOT emit workflow_run events (GitHub's
+          recursion guard), so auto-merge keyed on workflow_run never retriggers when the release PR's checks go green.
+          Falls back to GITHUB_TOKEN when unset.
+        required: false
+        default: ""
+        type: string
+    secrets:
+      app-private-key:
+        description: >-
+          Private key for the App named by app-client-id (e.g. secrets.FF_MERGE_PRIVATE_KEY). Required when app-client-id
+          is set; ignored otherwise.
+        required: false
+      homebrew-tap-token:
+        description: >-
+          PAT with write access to the Homebrew tap repository (secrets.HOMEBREW_TAP_GITHUB_TOKEN). Optional; only
+          needed if .goreleaser.yaml publishes a cask.
+        required: false
+      # Apple signing + notarization material for a .goreleaser.yaml with a
+      # `notarize.macos` block. All five are org secrets, scoped to the repos that
+      # notarize (the org's one shared open-source Developer ID certificate and
+      # one App Store Connect team API key); a repo whose config has no notarize
+      # block leaves them out. Setup: README -> "macOS notarization: org setup".
+      macos-sign-p12:
+        description: >-
+          Base64 of the .p12 (Developer ID Application certificate + private key) that signs the darwin binaries
+          (secrets.MACOS_SIGN_P12, the org's shared open-source signing certificate). Optional; only read by a
+          .goreleaser.yaml with a notarize.macos block. See README -> macOS notarization.
+        required: false
+      macos-sign-password:
+        description: >-
+          Export password of the .p12 in macos-sign-p12 (secrets.MACOS_SIGN_PASSWORD). Optional; only read by a
+          .goreleaser.yaml with a notarize.macos block. See README -> macOS notarization.
+        required: false
+      macos-notary-issuer-id:
+        description: >-
+          Issuer ID of the App Store Connect team API key that submits the notarization
+          (secrets.MACOS_NOTARY_ISSUER_ID). Optional; only read by a .goreleaser.yaml with a notarize.macos block. See
+          README -> macOS notarization.
+        required: false
+      macos-notary-key-id:
+        description: >-
+          Key ID of that App Store Connect team API key (secrets.MACOS_NOTARY_KEY_ID). Optional; only read by a
+          .goreleaser.yaml with a notarize.macos block. See README -> macOS notarization.
+        required: false
+      macos-notary-key:
+        description: >-
+          Base64 of that App Store Connect team API key's .p8 private key (secrets.MACOS_NOTARY_KEY). Optional; only
+          read by a .goreleaser.yaml with a notarize.macos block. See README -> macOS notarization.
+        required: false
+    # Surface the release-please result so a caller can add release-only jobs.
+    # Every value is an empty string when this run did not cut a release, so gate
+    # with `if: needs.release.outputs.release_created` (where `release` is the
+    # caller's job that `uses:` this workflow).
+    #
+    # Keep the `${{ }}` braces OUT of the descriptions below: GitHub evaluates
+    # expressions inside a workflow_call output description, and `needs` is out of
+    # scope there, so a braced example is an "invalid workflow file" at startup.
+    # A job-level `if:` needs no braces anyway.
+    outputs:
+      release_created:
+        description: >-
+          "true" when this run cut a release (the release PR merged), empty string otherwise. Use as the gate for
+          follow-on jobs: `if: needs.release.outputs.release_created`.
+        value: ${{ jobs.release-please.outputs.release_created }}
+      tag_name:
+        description: Git tag of the release just cut (e.g. v1.2.3). Empty string when no release was created.
+        value: ${{ jobs.release-please.outputs.tag_name }}
+      sha:
+        description: Commit SHA the release was tagged at. Empty string when no release was created.
+        value: ${{ jobs.release-please.outputs.sha }}
+      version:
+        description: Full semver of the release, no leading v (e.g. 1.2.3). Empty string when no release was created.
+        value: ${{ jobs.release-please.outputs.version }}
+      major:
+        description: Major component of the released version (e.g. 1). Empty string when no release was created.
+        value: ${{ jobs.release-please.outputs.major }}
+      minor:
+        description: Minor component of the released version (e.g. 2). Empty string when no release was created.
+        value: ${{ jobs.release-please.outputs.minor }}
+      patch:
+        description: Patch component of the released version (e.g. 3). Empty string when no release was created.
+        value: ${{ jobs.release-please.outputs.patch }}
+
+# Granted per job below. Note for callers: GitHub validates a reusable workflow's
+# permissions as the union of every job and ignores `if:`, so a caller must grant
+# the goreleaser job's id-token/attestations/artifact-metadata/packages and the
+# docs job's pages:write even on the paths where those jobs are skipped -- see
+# examples/release.yaml.
+permissions: {}
+
+# concurrent release-please runs can open duplicate release PRs; queue them.
+concurrency:
+  group: release
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      # create draft release and git tag
+      contents: write
+      # create pr labels via issues api
+      issues: write
+      # create the release pull request
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release-please.outputs.release_created }}
+      tag_name: ${{ steps.release-please.outputs.tag_name }}
+      sha: ${{ steps.release-please.outputs.sha }}
+      version: ${{ steps.release-please.outputs.version }}
+      major: ${{ steps.release-please.outputs.major }}
+      minor: ${{ steps.release-please.outputs.minor }}
+      patch: ${{ steps.release-please.outputs.patch }}
+      # internal: truthy hashes that pick the goreleaser/publish path and gate the docs job (not workflow_call outputs)
+      goreleaser: ${{ steps.detect.outputs.goreleaser }}
+      zensical: ${{ steps.detect.outputs.zensical }}
+    steps:
+      # checked out so the goreleaser detection below can read the workspace; a
+      # job-level `if:` on the downstream jobs runs before their checkout and
+      # could not see it.
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # release-please authenticates with the App token or GITHUB_TOKEN, not the persisted credential
+
+      # When the caller supplies a GitHub App (app-client-id + app-private-key),
+      # mint a short-lived installation token so release-please authors the release
+      # as the App. This is what lets the release PR's branch push emit workflow_run
+      # events: a push made with the default GITHUB_TOKEN is suppressed by GitHub's
+      # recursion guard, so any workflow_run-keyed automation (e.g. the reusable
+      # auto-merge) never fires when a GITHUB_TOKEN-authored release PR goes green.
+      # Skipped when no App is configured: the output is empty and every step below
+      # falls back to GITHUB_TOKEN (release PR still opens, just doesn't retrigger
+      # workflow_run automation).
+      - name: Mint a github app installation token
+        id: app-token
+        if: inputs.app-client-id != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          # release-please cuts the release/tag (contents) and opens the release PR
+          # (pull-requests); the autorelease:* labels it applies already exist, so
+          # pull-requests:write covers labelling and no issues scope is needed.
+          permission-contents: write
+          permission-pull-requests: write
+
+      # Each output is a config-file hash (empty when the file is absent), used
+      # downstream as a truthy flag: goreleaser picks the goreleaser vs publish job;
+      # zensical gates the docs job. hashFiles returns a fixed-format hash, never
+      # caller-controlled text, so interpolating it into the run script is injection-safe.
+      - name: Detect goreleaser and zensical config
+        id: detect
+        run: |
+          {
+            echo "goreleaser=${{ hashFiles('.goreleaser.yaml', '.goreleaser.yml') }}"
+            echo "zensical=${{ hashFiles('zensical.toml') }}"
+          } >> "$GITHUB_OUTPUT"
+
+      # First pass cuts the release only; the release PR is built in a second pass
+      # below, once the tag exists.
+      - name: Get release version
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release-please
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          skip-github-pull-request: true
+
+      # Guarantee the tag exists at the released commit: a draft release (go,
+      # draft: true) has no tag yet and GoReleaser cannot version without one, so
+      # create it; a non-draft release already made it, so the create fails and the
+      # patch sets it to the same commit (a no-op). Idempotent either way.
+      - name: Create release tag
+        if: ${{ steps.release-please.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release-please.outputs.tag_name }}
+          SHA: ${{ steps.release-please.outputs.sha }}
+        run: |
+          set -eu
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA" ||
+          gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" -X PATCH -f sha="$SHA" -F force=true
+
+      # Build the release PR only now that the tag exists. A draft release whose
+      # tag ref is missing is invisible to release-please's latest-release lookup,
+      # so computing the PR in the same pass that cuts a release treats every
+      # released commit as unreleased and opens a duplicate vNext PR.
+      - name: Create release pull request
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          skip-github-release: true
+
+  goreleaser:
+    needs: release-please
+    # Only run the privileged, full-history checkout of a computed ref from a
+    # trusted trigger. This workflow is reusable, so CodeQL can't see the caller's
+    # trigger and assumes a privileged fork-PR context; the guard makes the
+    # trusted-context assumption explicit and enforced (defense in depth against a
+    # consumer wiring this to pull_request_target). This is a positive allowlist,
+    # not a denylist of fork-triggerable events: a new event type GitHub may add
+    # later fails closed (the job is skipped) until it is vetted and added here.
+    if: >-
+      needs.release-please.outputs.release_created && needs.release-please.outputs.goreleaser &&
+      contains(fromJSON('["push","workflow_dispatch","schedule"]'), github.event_name)
+    runs-on: ubuntu-latest
+    permissions:
+      # upload assets and publish the draft release (and move vanity tags)
+      contents: write
+      # use id token for cosign keyless signing
+      id-token: write
+      # write github provenance attestation
+      attestations: write
+      # create artifact storage record for github attestation
+      artifact-metadata: write
+      # push container images (a repo with a dockers_v2 config) to ghcr
+      packages: write
+    steps:
+      - name: Checkout repository at release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          fetch-depth: 0 # GoReleaser needs full history + tags for the changelog
+          persist-credentials: false # GoReleaser publishes via the GITHUB_TOKEN env, not the persisted credential
+          submodules: true # fetch the shared task library (the-marmack/make), mounted at .mise/, whose mise pins provide the release toolchain below; a no-op where the config is a root mise.toml
+
+      # The whole release toolchain comes from the repo's mise pins -- the Go
+      # toolchain GoReleaser builds with, goreleaser itself, cosign for the
+      # binary_signs keyless signing config, and syft for the sboms config -- so
+      # the release is built by exactly the versions the local snapshot/release
+      # tasks use. Each download's sha256 (and provenance, where published) is
+      # verified against mise.lock (`--locked` is added automatically); only
+      # these four are installed, not the full lint toolset. The action puts
+      # their bin directories on PATH for the goreleaser step, outside the
+      # workspace, so nothing trips GoReleaser's git-dirty check.
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: v2026.10.1
+          # sha256 of the linux-x64 mise binary for the version above, from the release's
+          # SHASUMS256.txt -- the action verifies the extracted binary, not the archive
+          sha256: 31e6859cf639ed4594906da3fcd0fe2055e9daddae75e9786dbe50b3fb3c0f4a
+          install_args: go aqua:goreleaser/goreleaser aqua:sigstore/cosign aqua:anchore/syft
+          # no cache in the release-signing job (neither mise's tool cache nor a
+          # Go build cache): a cache poisoned from a less-trusted context must
+          # not feed the signed, attested artifacts
+          cache: false
+
+      # Container images (a repo with a dockers_v2 config in .goreleaser.yaml):
+      # buildx with a docker-container driver for multi-platform manifests, QEMU
+      # binfmt so non-native Dockerfile stages (apt/npm under arm64) can run on
+      # the amd64 runner, and a ghcr login for the push. Gated on a repo-root
+      # Dockerfile / Dockerfile.* — the same convention dockers_v2 configs here
+      # follow — so image-less repos skip all three.
+      - name: Setup QEMU
+        if: ${{ hashFiles('Dockerfile', 'Dockerfile.*') != '' }}
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Setup docker buildx
+        if: ${{ hashFiles('Dockerfile', 'Dockerfile.*') != '' }}
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to ghcr
+        if: ${{ hashFiles('Dockerfile', 'Dockerfile.*') != '' }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # goreleaser is the mise-pinned binary installed above (no
+      # goreleaser-action, no floating `latest`), so the release is cut by the
+      # same version as `mise run release` locally.
+      - name: Create release (goreleaser)
+        run: goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with write access to the Homebrew tap -- the default GITHUB_TOKEN
+          # cannot push the cask to another repository.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.homebrew-tap-token }}
+          # Developer ID certificate + App Store Connect API key for a
+          # .goreleaser.yaml `notarize.macos` block: goreleaser's embedded quill
+          # signs and notarizes the darwin binaries in-process, on this Linux
+          # runner (no macOS runner, no Pro licence; the mise pin is past the
+          # v2.5 that introduced it). Empty values are harmless --
+          # goreleaser's isEnvSet treats an empty variable as unset, and a config
+          # without a notarize block never reads them. The two base64 values are
+          # single-line so GitHub's secret masking covers them in the log.
+          MACOS_SIGN_P12: ${{ secrets.macos-sign-p12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.macos-sign-password }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.macos-notary-issuer-id }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.macos-notary-key-id }}
+          MACOS_NOTARY_KEY: ${{ secrets.macos-notary-key }}
+
+
+      # Attest SLSA build provenance (the default mode when no predicate is given)
+      # for every file listed in checksums.txt (archives + SBOMs + signature
+      # bundles). Verify with:
+      #   gh attestation verify --owner <org> <file>
+      - name: Attest release artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ./dist/checksums.txt
+
+      # Attest SLSA build provenance for every container image goreleaser
+      # published: dist/digests.txt (the docker_digest artifact) lists
+      # `<hex digest>  <image:tag>` in the same checksum format. Skipped on a
+      # repo that builds no images -- gated on a repo-root Dockerfile like the
+      # container setup steps above, because goreleaser writes an *empty*
+      # digests.txt even when no images were built, which an existence check
+      # alone (hashFiles hashes empty files too) would wave through into an
+      # attest failure ("no statement subjects"). Verify with:
+      #   gh attestation verify --owner <org> oci://ghcr.io/<org>/<image>:<tag>
+      - name: Attest container images
+        if: ${{ hashFiles('Dockerfile', 'Dockerfile.*') != '' && hashFiles('dist/digests.txt') != '' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ./dist/digests.txt
+
+  # Build the Zensical documentation site and publish it to GitHub Pages -- the
+  # zensical.toml counterpart to the goreleaser path. It only needs release-please
+  # (not goreleaser), so on a repo that both ships binaries and publishes docs the
+  # two run in parallel; on a docs-only repo goreleaser is skipped and this runs
+  # straight off release-please.
+  #
+  # `uv run zensical build` re-renders docs/ into ./site with no language build: a
+  # repo whose docs embed generated reference (e.g. a committed CLI/man dump) ships
+  # that output, so this needs no toolchain beyond uv (it reads uv.lock +
+  # .python-version and provisions the interpreter on demand). The consuming repo
+  # must set Settings -> Pages -> Source -> GitHub Actions for the deploy to land.
+  #
+  # Same trusted-trigger allowlist as goreleaser: this checks out a computed ref and
+  # runs the repo's locked deps, so it is gated to vetted events and fails closed on
+  # any other (defense in depth for a reusable workflow that cannot see its caller's
+  # trigger).
+  docs:
+    needs: release-please
+    if: >-
+      needs.release-please.outputs.release_created && needs.release-please.outputs.zensical &&
+      contains(fromJSON('["push","workflow_dispatch","schedule"]'), github.event_name)
+    runs-on: ubuntu-latest
+    permissions:
+      # check out the source to build the site
+      contents: read
+      # publish the GitHub Pages deployment
+      pages: write
+      # OIDC token the deploy-pages action exchanges for the Pages deploy
+      id-token: write
+    # serialize Pages deployments; never cancel an in-flight publish
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout repository at release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # build the exact commit the release was tagged at
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false # read-only checkout; don't leave the token in .git/config
+          # pull Git LFS objects so Zensical embeds real assets, not pointer files; a
+          # no-op on repos that track nothing in LFS.
+          lfs: true
+          submodules: true # fetch the shared task library (the-marmack/make), mounted at .mise/, whose mise pins provide uv; a no-op where the config is a root mise.toml
+
+      # uv from the repo's mise pins (sha256-verified against mise.lock,
+      # `--locked` added automatically), on PATH for the build step. Nothing
+      # here is signed or attested, so the mise cache stays on.
+      - name: Setup mise (uv)
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: v2026.10.1
+          # sha256 of the linux-x64 mise binary for the version above, from the release's
+          # SHASUMS256.txt -- the action verifies the extracted binary, not the archive
+          sha256: 31e6859cf639ed4594906da3fcd0fe2055e9daddae75e9786dbe50b3fb3c0f4a
+          install_args: aqua:astral-sh/uv
+
+      # uv run resolves the locked deps (uv.lock) and the .python-version toolchain
+      # on demand, then Zensical renders docs/ into ./site.
+      - name: Build site
+        run: uv run zensical build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  # Move the floating major/minor tags (v1, v1.1) that consumers pin onto the new
+  # release commit -- one implementation shared by both paths, ordered last. It
+  # needs goreleaser, so on the Go path the tags advance only after that job has
+  # published and attested the release (never pointing @v1 at a half-finished
+  # release); on every other path goreleaser is skipped and this runs straight
+  # after release-please. The release was already cut by release-please and dist/
+  # freshness is enforced in CI, so there is nothing to build or verify -- a pure
+  # tag move via the API, no checkout or toolchain.
+  #
+  # `!cancelled()` is required so a skipped goreleaser (the non-Go path) does not
+  # skip this job by dependency; the result guard then proceeds only when goreleaser
+  # succeeded or was skipped, never when it failed -- so a failed release never
+  # advances the tags. Same trusted-trigger allowlist as goreleaser (fails closed on
+  # any event type not vetted here).
+  vanity-tags:
+    needs: [release-please, goreleaser]
+    if: >-
+      !cancelled() && inputs.vanity-tags && needs.release-please.outputs.release_created &&
+      (needs.goreleaser.result == 'success' || needs.goreleaser.result == 'skipped') &&
+      contains(fromJSON('["push","workflow_dispatch","schedule"]'), github.event_name)
+    runs-on: ubuntu-latest
+    permissions:
+      # move vanity tags
+      contents: write
+    steps:
+      - name: Move vanity tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          SHA: ${{ needs.release-please.outputs.sha }}
+        run: |
+          set -eu
+          MAJOR="${TAG%%.*}" # v1
+          MINOR="${TAG%.*}"  # v1.1
+          for ref in "$MAJOR" "$MINOR"; do
+            gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$ref" -X PATCH -f sha="$SHA" -F force=true ||
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$ref" -f sha="$SHA"
+          done

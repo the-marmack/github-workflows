@@ -1,0 +1,19 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# actionlint validates against the workflow schema as of its release; ignore
+# findings that are newer-GitHub-feature false positives, scoped to the exact
+# message so anything else still fails the gate.
+paths:
+  .github/workflows/**/*.yaml:
+    ignore:
+      # `concurrency.queue` shipped 2026-05-07 ("Actions concurrency groups now
+      # allow larger queues" changelog); actionlint v1.7.12 — the latest release,
+      # 2026-03-30 — predates it. Drop this once actionlint learns the key.
+      - 'unexpected key "queue" for "concurrency" section'
+      # `uses: $/...` self-repository references shipped 2026-07 ("Reference
+      # same-repository actions with self-repository syntax" blog); zizmor's
+      # `self-repository` audit (v1.30.0) now requires it in place of `./...`,
+      # which actionlint v1.7.12 predates (rhysd/actionlint#711). Drop this once
+      # actionlint learns it.
+      - 'reusable workflow call "\$/.+" at "uses" is not following the format'

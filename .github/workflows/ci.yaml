@@ -1,0 +1,221 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# Reusable CI for any repo. Runs the canonical mise tasks -- lint, build, test --
+# as one parallel job per task, then a Codecov upload isolated from PR-supplied
+# code. mise is the task runner and the sole source of every toolchain and dev
+# CLI the tasks invoke: the language runtimes (go, node, python, uv) come from
+# the same pins as the linters, checksum-verified against the library's
+# mise.lock and restored from the mise-action cache. No setup-go / setup-node /
+# setup-uv -- the repo's mise config is the language boundary, and this workflow
+# never hard-codes go, npm, or uv.
+#
+# The consuming repo must provide a mise config -- a root mise.toml, or the
+# shared task library (the-marmack/make) mounted at .mise/ -- defining
+# whichever of the canonical tasks do real work there:
+#   lint  -- all check-mode static analysis (prettier --check, markdownlint, golangci-lint, govulncheck, ...)
+#   build -- compile / build dist/
+#   test  -- tests with coverage, emitting coverage/cobertura-coverage.xml (and optionally coverage/junit.xml)
+#   e2e   -- end-to-end tests (only run when the caller sets e2e: true)
+# There are no no-op stubs: this workflow discovers the task list
+# (`mise tasks ls --name-only`) and skips absent tasks. A repo with no mise
+# config fails loudly -- there is no Makefile fallback. Coverage is optional -- a
+# repo that emits none still passes, and a repo that emits no coverage at all
+# (e.g. the skills library) sets `coverage: false` to skip the Codecov upload
+# job entirely.
+#
+# Runs via workflow_call from a thin caller (examples/ci.yaml) that owns the
+# push/pull_request triggers.
+name: Reusable Continuous Integration
+
+on:
+  workflow_call:
+    inputs:
+      e2e:
+        description: Run the `e2e` task job. Off by default; e2e often needs services or secrets.
+        required: false
+        default: false
+        type: boolean
+      coverage:
+        description: Upload coverage and test results to Codecov. Set false for repos that emit neither.
+        required: false
+        default: true
+        type: boolean
+
+# granted per job
+permissions: {}
+
+jobs:
+  # One parallel job per canonical task. Each installs the repo's mise pins,
+  # then runs `mise run <task>`.
+  tasks:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [lint, build, test]
+    runs-on: ubuntu-latest
+    permissions:
+      # check out the repository
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # read-only checkout; don't leave the token in .git/config
+          submodules: true # fetch the shared task library (the-marmack/make), mounted at .mise/; a no-op where no submodule exists
+
+      # mise installs everything the tasks run -- the language toolchains (go,
+      # node, python, uv) and the pinned dev CLIs alike -- verifying each
+      # download's sha256 (and provenance, where published) against the
+      # library's mise.lock (`--locked` is added automatically). The whole
+      # toolset is installed eagerly and cached keyed on the config hash, so
+      # after the first run per pin-set this restores from cache; the action
+      # also exports the tools' bin directories onto PATH for later steps. The
+      # config lives at the repo root (a root mise.toml, or the library mounted
+      # at .mise/ -- both resolve from the workspace root); a repo with neither
+      # fails the task-detection step below with a clear error.
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: v2026.10.1
+          # sha256 of the linux-x64 mise binary for the version above, from the release's
+          # SHASUMS256.txt -- the action verifies the extracted binary, not the archive
+          sha256: 31e6859cf639ed4594906da3fcd0fe2055e9daddae75e9786dbe50b3fb3c0f4a
+
+      # A repo defines only the canonical tasks that do real work -- there are
+      # no no-op stubs -- so ask mise for the task list and skip the tasks this
+      # repo does not define. A mise failure fails this step rather than
+      # silently skipping the task.
+      - name: Detect the ${{ matrix.target }} task
+        id: task
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          if [ ! -f mise.toml ] && [ ! -f .mise/config.toml ]; then
+            echo "::error::no mise config found (mise.toml or .mise/config.toml) -- this workflow requires the mise-task layout"
+            exit 1
+          fi
+          tasks="$(mise tasks ls --name-only)"
+          if printf '%s\n' "$tasks" | grep -qxF -- "$TARGET"; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=false" >>"$GITHUB_OUTPUT"
+            echo "no '$TARGET' task defined -- skipping"
+          fi
+
+      - name: Run ${{ matrix.target }}
+        if: steps.task.outputs.run == 'true'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: mise run "$TARGET"
+
+      # Repos that commit their build output -- a JavaScript Action shipping a
+      # checked-in dist/, which GitHub runs directly with no build at consumption
+      # time -- must keep that artifact in sync with source. After the build task
+      # regenerates dist/, a non-empty diff means the committed copy is stale; fail
+      # the PR so it never reaches main (and never gets released). Gated on dist/
+      # existing, so it is a no-op for the repos that don't commit one.
+      - name: Verify dist/ is up to date
+        if: ${{ matrix.target == 'build' && hashFiles('dist/**') != '' }}
+        run: git diff --exit-code -- dist
+
+      # Coverage is optional: gated on the `coverage` input (off for repos that
+      # emit none, e.g. the skills library), and even when on, `if-no-files-found:
+      # ignore` keeps a repo that happens to produce nothing from erroring -- the
+      # isolated coverage job below skips the upload when nothing was produced.
+      # Go repos emit the native profile (coverage.out, which Codecov ingests
+      # directly); everything else emits Cobertura XML -- always one or the other.
+      - name: Upload coverage artifact
+        if: ${{ matrix.target == 'test' && inputs.coverage }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: |
+            coverage/coverage.out
+            coverage/cobertura-coverage.xml
+          if-no-files-found: ignore
+
+      - name: Upload test results artifact
+        if: ${{ matrix.target == 'test' && inputs.coverage }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results
+          path: coverage/junit.xml
+          if-no-files-found: ignore
+
+  # Upload to Codecov from a clean checkout that never ran the build, keeping the
+  # Codecov token isolated from PR-supplied code. Tolerant of repos that emit no
+  # coverage: the downloads may find nothing and each upload is gated on the file.
+  coverage:
+    needs: tasks
+    if: ${{ !cancelled() && needs.tasks.result == 'success' && inputs.coverage }}
+    runs-on: ubuntu-latest
+    permissions:
+      # check out the repository
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # read-only checkout; don't leave the token in .git/config
+
+      - name: Download coverage report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-report
+        continue-on-error: true
+
+      # The artifact holds the native Go profile or Cobertura XML, never both --
+      # upload whichever the test job produced.
+      - name: Upload coverage report
+        if: ${{ hashFiles('coverage.out', 'cobertura-coverage.xml') != '' }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ${{ hashFiles('coverage.out') && 'coverage.out' || 'cobertura-coverage.xml' }}
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Download test results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-results
+        continue-on-error: true
+
+      - name: Upload test results
+        if: hashFiles('junit.xml')
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1.2.1
+        with:
+          # the artifact holds only this one file; don't let the action walk the tree
+          files: junit.xml
+          disable_search: true
+          fail_ci_if_error: true
+
+  # Opt-in end-to-end tests. Kept separate from the always-on gates because e2e
+  # commonly needs services or secrets and shouldn't run on every PR by default.
+  e2e:
+    if: ${{ inputs.e2e }}
+    runs-on: ubuntu-latest
+    permissions:
+      # check out the repository
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # read-only checkout; don't leave the token in .git/config
+          submodules: true # fetch the shared task library (the-marmack/make), mounted at .mise/; a no-op where no submodule exists
+
+      # See the tasks job's Setup mise step: toolchains and dev CLIs install via mise.
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: v2026.10.1
+          # sha256 of the linux-x64 mise binary for the version above, from the release's
+          # SHASUMS256.txt -- the action verifies the extracted binary, not the archive
+          sha256: 31e6859cf639ed4594906da3fcd0fe2055e9daddae75e9786dbe50b3fb3c0f4a
+
+      # No task-existence gate here: e2e is opt-in (`e2e: true` in the caller),
+      # so a repo that opts in without defining the task should fail loudly.
+      - name: Run e2e
+        run: mise run e2e

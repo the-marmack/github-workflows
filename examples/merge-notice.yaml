@@ -1,0 +1,30 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# Caller workflow — copy to `.github/workflows/merge-notice.yaml` in a consuming
+# repo. When a PR is opened it posts a one-time comment explaining the repo
+# merges via `/merge` (see examples/merge.yaml). Optional but friendly for
+# contributors who don't yet know the convention.
+#
+# pull_request_target (not pull_request) so the notice also reaches fork PRs; the
+# reusable workflow only posts a static comment with a pull-requests:write token,
+# so the elevated context is safe. No secret needed.
+#
+# Replace the all-zeros placeholder SHA with the full commit SHA of the release you want
+# (the # comment names it; Renovate keeps both current) — see README "Pinning".
+
+name: Merge Notice
+
+on: # zizmor: ignore[dangerous-triggers] -- required: the notice must reach fork PRs; the reusable workflow only posts a static comment, no PR code is run
+  pull_request_target:
+    types: [opened]
+
+# the reusable workflow comments with GITHUB_TOKEN; grant just that
+permissions:
+  pull-requests: write
+
+jobs:
+  notice:
+    uses: the-marmack/github-workflows/.github/workflows/merge-notice.yaml@0000000000000000000000000000000000000000 # v7.0.0 # x-release-please-version
+    with:
+      pr-number: ${{ github.event.pull_request.number }}

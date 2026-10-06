@@ -1,0 +1,4 @@
+[submodule "toolchain"]
+	path = .mise
+	url = https://github.com/the-marmack/toolchain.git
+	branch = v3.1.0

@@ -1,0 +1,24 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# This repo's own CI, dogfooding the reusable ci workflow by local path (so it
+# always runs the current definition, not a release pin). The library has no root
+# go.mod and no committed dist/ -- every tool comes from the shared toolchain
+# submodule's pins at .mise/ -- so the reusable workflow sets up mise only and
+# runs the canonical tasks: just lint (prose + license + workflow lint) is
+# defined here, so build and test are skipped.
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["main", "releases/*"]
+
+# the reusable workflow's jobs only need contents:read; grant just that ceiling
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: $/.github/workflows/ci.yaml

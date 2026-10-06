@@ -1,0 +1,47 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# This repo's own caller for the reusable merge workflow — the library dogfoods both
+# fast-forward flows from one caller: manual `/merge` and set-and-forget auto-merge.
+# A maintainer comments `/merge` to merge an approved, green PR now, or arms it
+# (`/auto-merge` comment or the `auto-merge` label) to merge automatically once
+# approved and green — preserving its signature either way.
+#
+# Unlike examples/merge.yaml — which consuming repos copy and pin to @v2 — this calls
+# the reusable workflow by local path (`./.github/workflows/...`), so it always
+# exercises this repo's current definition rather than a release.
+#
+# Triggers are routed by github.event_name inside merge.yaml. Every one is an event that
+# does NOT attach a check run to the PR (issue_comment, workflow_run, schedule), so the
+# merge machinery adds no skipped-job clutter to the PR's checks list. issue_comment runs
+# in the base-repo context (so `/merge` and `/auto-merge` work even for fork PRs). The
+# workflow_run list names every workflow that must pass — "Continuous Integration"
+# (self-ci.yaml) and "Security Analysis" (self-security.yaml) — plus "Merge Review Ack"
+# (self-merge-review-ack.yaml), whose completion turns an approval into a merge attempt
+# (fork and same-repo alike); whichever finishes last triggers the attempt and ff-merge
+# re-verifies all checks. The schedule sweeps armed PRs as a final backstop.
+#
+# Org prerequisites (see the-marmack/ff-merge): the FF_MERGE_CLIENT_ID
+# variable + FF_MERGE_PRIVATE_KEY secret, and the "FF Merge" App in main's ruleset
+# bypass list.
+name: Merge
+
+on: # zizmor: ignore[dangerous-triggers] -- required: workflow_run gates auto-merge on CI; no PR code is checked out or run
+  issue_comment:
+    types: [created]
+  workflow_run:
+    workflows: ["Continuous Integration", "Security Analysis", "Merge Review Ack"]
+    types: [completed]
+  schedule:
+    - cron: "17 * * * *"
+
+# the App token does the privileged work; the caller grants nothing
+permissions: {}
+
+jobs:
+  merge:
+    uses: $/.github/workflows/merge.yaml
+    with:
+      app-client-id: ${{ vars.FF_MERGE_CLIENT_ID }}
+    secrets:
+      app-private-key: ${{ secrets.FF_MERGE_PRIVATE_KEY }}

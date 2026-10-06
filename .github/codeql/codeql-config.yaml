@@ -1,0 +1,13 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# CodeQL analysis configuration for this repo's own self-security.yaml run.
+#
+# Security only: the security-extended suite runs the security queries (a
+# superset of the default) without the maintainability/reliability "quality"
+# queries that security-and-quality adds. This repo is workflow YAML only, so
+# there is nothing to exclude (no bundled dist/).
+name: "github-workflows CodeQL config"
+
+queries:
+  - uses: security-extended

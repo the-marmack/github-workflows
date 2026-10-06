@@ -1,0 +1,36 @@
+# Copyright 2026 BitWise Media Group Ltd
+# SPDX-License-Identifier: MIT
+
+# This repo's own CodeQL run, dogfooding the reusable security workflow by local path
+# (so it always runs the current definition, not a release pin). The library is
+# GitHub Actions YAML + Markdown with no compilable Go and no JavaScript/TypeScript
+# product source -- the package.json is prose-linting tooling only -- so it pins
+# `languages: actions` rather than let detection add an empty javascript-typescript
+# leg from that package.json. The actions leg also runs zizmor, gated on the root
+# zizmor.yaml shipped here.
+name: Security Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["main", "releases/*"]
+  schedule:
+    - cron: "28 20 * * 4"
+
+# ceiling for the reusable workflow's prep (contents) and analyze jobs
+permissions:
+  # upload analysis results to code scanning
+  security-events: write
+  # fetch internal or private CodeQL packs
+  packages: read
+  # only required for workflows in private repositories
+  actions: read
+  # check out the repository
+  contents: read
+
+jobs:
+  analyze:
+    uses: $/.github/workflows/security.yaml
+    with:
+      languages: actions
