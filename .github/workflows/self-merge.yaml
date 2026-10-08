@@ -41,6 +41,9 @@ permissions: {}
 jobs:
   merge:
     uses: $/.github/workflows/merge.yaml
+    with:
+      # merge without an approving review: authors can't approve their own PRs, and this org has one maintainer
+      require-approval: false
     secrets:
       app-client-id: ${{ secrets.FF_MERGE_CLIENT_ID }}
       app-private-key: ${{ secrets.FF_MERGE_PRIVATE_KEY }}
