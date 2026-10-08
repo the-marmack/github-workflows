@@ -22,7 +22,7 @@
 # Renovate's own body rewrites never re-trigger a run (filtered as a Bot sender).
 #
 # Org prerequisites (see README "renovate.yaml"): the "Renovate" App installed on this
-# repo, exposed as the RENOVATE_CLIENT_ID variable + RENOVATE_PRIVATE_KEY secret. Take
+# repo, exposed as the RENOVATE_CLIENT_ID + RENOVATE_PRIVATE_KEY secrets. Take
 # the repo out of the org-wide bot's autodiscoverFilter, or retire that loop once every
 # repo carries this caller -- two bots on one repo race on branches and automerge.
 #
@@ -61,8 +61,8 @@ jobs:
   renovate:
     uses: the-marmack/github-workflows/.github/workflows/renovate.yaml@0000000000000000000000000000000000000000 # v7.0.0 # x-release-please-version
     with:
-      app-client-id: ${{ vars.RENOVATE_CLIENT_ID }}
       dry-run: ${{ inputs.dry-run || '' }}
       log-level: ${{ inputs.log-level || 'info' }}
     secrets:
+      app-client-id: ${{ secrets.RENOVATE_CLIENT_ID }}
       app-private-key: ${{ secrets.RENOVATE_PRIVATE_KEY }}

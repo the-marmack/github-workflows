@@ -18,7 +18,7 @@
 #
 # Org prerequisites: a "Project Sync" App with organization projects read/write and
 # issues + pull-requests read, installed on all repositories, exposed as the
-# ADD_TO_PROJECT_CLIENT_ID variable + ADD_TO_PROJECT_PRIVATE_KEY secret. See README.
+# ADD_TO_PROJECT_CLIENT_ID + ADD_TO_PROJECT_PRIVATE_KEY secrets. See README.
 
 name: Reusable Add to Project
 
@@ -30,8 +30,10 @@ on:
         required: true
         type: string
       app-client-id:
-        description: Client id of the Project Sync GitHub App (vars.ADD_TO_PROJECT_CLIENT_ID).
-        required: true
+        description: >-
+          Deprecated: pass the client id as the app-client-id secret instead. Used only when that secret is empty.
+        required: false
+        default: ""
         type: string
       labeled:
         description: Optional comma-separated labels; when set, only items carrying them are added.
@@ -47,6 +49,9 @@ on:
       app-private-key:
         description: Private key of the Project Sync GitHub App (secrets.ADD_TO_PROJECT_PRIVATE_KEY).
         required: true
+      app-client-id:
+        description: Client id of the Project Sync GitHub App (secrets.ADD_TO_PROJECT_CLIENT_ID).
+        required: false
 
 # the App token does the privileged work; the job's GITHUB_TOKEN is unused
 permissions: {}
@@ -59,7 +64,7 @@ jobs:
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
+          client-id: ${{ secrets.app-client-id || inputs.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
           # add-to-project writes the item into the org project (organization-projects)
           # and reads the triggering issue / PR to resolve its node id (issues,

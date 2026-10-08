@@ -60,7 +60,8 @@ on:
         type: boolean
       app-client-id:
         description: >-
-          Optional client id of a GitHub App used to author the release (e.g. vars.FF_MERGE_CLIENT_ID). When set (with
+          Deprecated: pass the client id as the app-client-id secret instead; this input is used only when that secret
+          is empty. Optional client id of a GitHub App used to author the release. When set (with
           app-private-key) release-please authenticates as the App instead of the default GITHUB_TOKEN, so the release
           PR's branch push is attributed to the App. Set this when workflow_run-keyed automation must fire for the
           release PR: a push made with the default GITHUB_TOKEN does NOT emit workflow_run events (GitHub's
@@ -74,6 +75,11 @@ on:
         description: >-
           Private key for the App named by app-client-id (e.g. secrets.FF_MERGE_PRIVATE_KEY). Required when app-client-id
           is set; ignored otherwise.
+        required: false
+      app-client-id:
+        description: >-
+          Optional client id of a GitHub App used to author the release (e.g. secrets.FF_MERGE_CLIENT_ID). See the
+          app-client-id input for what it does. Falls back to GITHUB_TOKEN when neither is set.
         required: false
       homebrew-tap-token:
         description: >-
@@ -160,6 +166,9 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    env:
+      # step-level `if:` can't read secrets, so the App's client id is exposed here once
+      APP_CLIENT_ID: ${{ secrets.app-client-id || inputs.app-client-id }}
     permissions:
       # create draft release and git tag
       contents: write
@@ -198,10 +207,10 @@ jobs:
       # workflow_run automation).
       - name: Mint a github app installation token
         id: app-token
-        if: inputs.app-client-id != ''
+        if: env.APP_CLIENT_ID != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
+          client-id: ${{ env.APP_CLIENT_ID }}
           private-key: ${{ secrets.app-private-key }}
           # release-please cuts the release/tag (contents) and opens the release PR
           # (pull-requests); the autorelease:* labels it applies already exist, so

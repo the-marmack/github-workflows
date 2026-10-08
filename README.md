@@ -104,15 +104,16 @@ major and minor tags (`v1` and `v1.1`). A committed `dist/` is verified for fres
 PR, not at release time.
 
 - **Inputs:** `vanity-tags` (default `false`; move the floating `v1` / `v1.1` tags — set it for Actions/reusable repos
-  whose consumers pin `@v1`), `app-client-id` (optional; author the release as a GitHub App rather than `GITHUB_TOKEN` —
-  `vars.FF_MERGE_CLIENT_ID`).
-- **Secrets:** `homebrew-tap-token` — optional; only needed if `.goreleaser.yaml` publishes a Homebrew cask to another
-  repo (`secrets.HOMEBREW_TAP_GITHUB_TOKEN`). `app-private-key` — optional; required only when `app-client-id` is set
-  (`secrets.FF_MERGE_PRIVATE_KEY`). `macos-sign-p12`, `macos-sign-password`, `macos-notary-issuer-id`,
-  `macos-notary-key-id`, `macos-notary-key` — optional; only read by a `.goreleaser.yaml` with a `notarize.macos` block
-  (`secrets.MACOS_SIGN_P12` / `MACOS_SIGN_PASSWORD` / `MACOS_NOTARY_ISSUER_ID` / `MACOS_NOTARY_KEY_ID` /
-  `MACOS_NOTARY_KEY`). All five are org secrets scoped to the notarizing repos — the shared open-source Developer ID
-  certificate and the team notary key — see [macOS notarization: org setup](#macos-notarization-org-setup).
+  whose consumers pin `@v1`), `app-client-id` (deprecated; pass the secret below instead).
+- **Secrets:** `app-client-id` — optional; author the release as a GitHub App rather than `GITHUB_TOKEN`
+  (`secrets.FF_MERGE_CLIENT_ID`). `homebrew-tap-token` — optional; only needed if `.goreleaser.yaml` publishes a
+  Homebrew cask to another repo (`secrets.HOMEBREW_TAP_GITHUB_TOKEN`). `app-private-key` — optional; required only when
+  `app-client-id` is set (`secrets.FF_MERGE_PRIVATE_KEY`). `macos-sign-p12`, `macos-sign-password`,
+  `macos-notary-issuer-id`, `macos-notary-key-id`, `macos-notary-key` — optional; only read by a `.goreleaser.yaml` with
+  a `notarize.macos` block (`secrets.MACOS_SIGN_P12` / `MACOS_SIGN_PASSWORD` / `MACOS_NOTARY_ISSUER_ID` /
+  `MACOS_NOTARY_KEY_ID` / `MACOS_NOTARY_KEY`). All five are org secrets scoped to the notarizing repos — the shared
+  open-source Developer ID certificate and the team notary key — see
+  [macOS notarization: org setup](#macos-notarization-org-setup).
 - **Auto-merging release PRs:** set `app-client-id` + `app-private-key` (reuse the "FF Merge" App) so release-please
   authors the release PR as the App. A release PR whose branch is pushed by the default `GITHUB_TOKEN` does **not** emit
   `workflow_run` events — GitHub's recursion guard suppresses them — so [`merge.yaml`](#mergeyaml)'s auto-merge, which
@@ -168,10 +169,12 @@ event for "all of a repo's own Actions checks finished" (GitHub does not fire `c
 auto-merge observes completion via `workflow_run(completed)` listing every required workflow. Requires branch protection
 that requires PR review. See [org setup](#fast-forward-merge-org-setup).
 
-- **Inputs:** `app-client-id` (required; `vars.FF_MERGE_CLIENT_ID`), `merge-command` (default `/merge`), `arm-command`
-  (default `/auto-merge`), `label` (default `auto-merge`), `require-approval` (default `true`), `maintainer-only`
-  (default `true`), `squash-authors` (default `the-marmack-renovate[bot]`; author logins whose PRs are squash-merged via
-  the API instead of fast-forwarded — see below).
+- **Secrets:** `app-client-id` (`secrets.FF_MERGE_CLIENT_ID`) and `app-private-key` (`secrets.FF_MERGE_PRIVATE_KEY`),
+  both required. The `app-client-id` input still works but is deprecated.
+- **Inputs:** `merge-command` (default `/merge`), `arm-command` (default `/auto-merge`), `label` (default `auto-merge`),
+  `require-approval` (default `true`), `maintainer-only` (default `true`), `squash-authors` (default
+  `the-marmack-renovate[bot]`; author logins whose PRs are squash-merged via the API instead of fast-forwarded — see
+  below).
 - **Renovate PRs (squash instead of fast-forward):** Renovate's shared preset arms the update types it does not
   automerge itself (majors, 0.x) with the `auto-merge` label, and `ff-merge` squash-merges PRs from the `squash-authors`
   logins rather than fast-forwarding: Renovate never rebases its branches onto the base (`rebaseWhen: conflicted`), so
@@ -210,9 +213,8 @@ permissions: {}
 jobs:
   merge:
     uses: the-marmack/github-workflows/.github/workflows/merge.yaml@v2
-    with:
-      app-client-id: ${{ vars.FF_MERGE_CLIENT_ID }}
     secrets:
+      app-client-id: ${{ secrets.FF_MERGE_CLIENT_ID }}
       app-private-key: ${{ secrets.FF_MERGE_PRIVATE_KEY }}
 ```
 
@@ -280,16 +282,16 @@ hands it to [`actions/add-to-project`](https://github.com/actions/add-to-project
 whose issue fires the caller — install it on **all repositories**. In this org the caller is fanned out to every repo by
 `org-config.sh workflows-sync` in [`github-settings`](https://github.com/the-marmack/github-settings).
 
-- **Inputs:** `project-url` (required; `https://github.com/orgs/<org>/projects/<n>`), `app-client-id` (required;
-  `vars.ADD_TO_PROJECT_CLIENT_ID`), `labeled` (optional; comma-separated labels to filter on), `label-operator`
-  (optional; `AND` / `OR` / `NOT`, default `OR`).
-- **Secrets:** `app-private-key` — required (`secrets.ADD_TO_PROJECT_PRIVATE_KEY`).
+- **Inputs:** `project-url` (required; `https://github.com/orgs/<org>/projects/<n>`), `labeled` (optional;
+  comma-separated labels to filter on), `label-operator` (optional; `AND` / `OR` / `NOT`, default `OR`).
+- **Secrets:** `app-client-id` (`secrets.ADD_TO_PROJECT_CLIENT_ID`) and `app-private-key`
+  (`secrets.ADD_TO_PROJECT_PRIVATE_KEY`), both required.
 - **Permissions (caller grants):** none — the App token does the privileged work, so the caller job sets
   `permissions: {}`.
 - **Triggers (the caller owns it):** `issues` (`opened`) is the usual choice; any event carrying an issue or PR works.
 - **Org setup (one-time):** create a **Project Sync** App with organization **projects** read/write and repository
   **issues** + **pull requests** read, install it on all repositories, and expose it as the `ADD_TO_PROJECT_CLIENT_ID`
-  variable + `ADD_TO_PROJECT_PRIVATE_KEY` secret.
+  and `ADD_TO_PROJECT_PRIVATE_KEY` secrets.
 
 ```yaml
 on:
@@ -301,8 +303,8 @@ jobs:
     uses: the-marmack/github-workflows/.github/workflows/add-to-project.yaml@v4
     with:
       project-url: https://github.com/orgs/the-marmack/projects/1
-      app-client-id: ${{ vars.ADD_TO_PROJECT_CLIENT_ID }}
     secrets:
+      app-client-id: ${{ secrets.ADD_TO_PROJECT_CLIENT_ID }}
       app-private-key: ${{ secrets.ADD_TO_PROJECT_PRIVATE_KEY }}
 ```
 
@@ -323,17 +325,18 @@ triggers the next one, and edits to any other issue or PR skip the job. The merg
 Verified commits, the App's pull-request ruleset bypass for squash-merging green in-policy PRs, one automerge per base
 branch per run. The App token is scoped to the calling repository, so the config repository must be public (it is).
 
-- **Inputs:** `app-client-id` (required; `vars.RENOVATE_CLIENT_ID`), `config-repository` (default
-  `the-marmack/renovate-config`), `config-ref` (default `main`), `config-file` (default `renovate-global.json5`),
-  `dry-run` (default empty = live; `extract`, `lookup` or `full`), `log-level` (default `info`).
-- **Secrets:** `app-private-key` — required (`secrets.RENOVATE_PRIVATE_KEY`).
+- **Inputs:** `config-repository` (default `the-marmack/renovate-config`), `config-ref` (default `main`), `config-file`
+  (default `renovate-global.json5`), `dry-run` (default empty = live; `extract`, `lookup` or `full`), `log-level`
+  (default `info`).
+- **Secrets:** `app-client-id` (`secrets.RENOVATE_CLIENT_ID`) and `app-private-key` (`secrets.RENOVATE_PRIVATE_KEY`),
+  both required.
 - **Permissions (caller grants):** none — the App token does the privileged work, so the caller sets `permissions: {}`.
 - **Triggers (the caller owns it):** `schedule` (hourly — Renovate automerges one PR per base branch per run, so the
   cron is also the merge throughput), `workflow_dispatch` (forwarding `dry-run` / `log-level`), `issues` (`edited`) and
   `pull_request` (`edited`). The `pull_request` trigger leaves a skipped job on every PR body edit that is not a
   Renovate checkbox; that is the price of reacting to the checkbox at all.
-- **Org setup:** the "Renovate" App installed on the repo, exposed as the `RENOVATE_CLIENT_ID` variable +
-  `RENOVATE_PRIVATE_KEY` secret (org-level, all repositories). Keep the org-wide bot off a repo that runs this caller —
+- **Org setup:** the "Renovate" App installed on the repo, exposed as the `RENOVATE_CLIENT_ID` + `RENOVATE_PRIVATE_KEY`
+  org secrets, shared with the repos that run this caller. Keep the org-wide bot off a repo that runs this caller —
   exclude it in the org bot's `autodiscoverFilter`, or retire that loop once every repo carries the caller — since two
   bots on one repo race on branches and automerge.
 
@@ -350,9 +353,8 @@ permissions: {}
 jobs:
   renovate:
     uses: the-marmack/github-workflows/.github/workflows/renovate.yaml@v7
-    with:
-      app-client-id: ${{ vars.RENOVATE_CLIENT_ID }}
     secrets:
+      app-client-id: ${{ secrets.RENOVATE_CLIENT_ID }}
       app-private-key: ${{ secrets.RENOVATE_PRIVATE_KEY }}
 ```
 
@@ -405,15 +407,16 @@ copied caller works either way. Avoid `@main` except for short-lived testing.
 
 `merge.yaml` (the `/merge` + auto-merge flows) drives the `the-marmack/ff-merge` action; `merge-notice.yaml` posts the
 companion convention reminder. The one-time org setup (the "FF Merge" GitHub App, its ruleset bypass, and the
-`FF_MERGE_CLIENT_ID` variable + `FF_MERGE_PRIVATE_KEY` secret) is documented in
+`FF_MERGE_CLIENT_ID` and `FF_MERGE_PRIVATE_KEY` secrets) is documented in
 [`the-marmack/ff-merge`](https://github.com/the-marmack/ff-merge).
 
-> **Note on App input names.** This library's contract is input `app-client-id` + secret `app-private-key`, backed by
-> `vars.FF_MERGE_CLIENT_ID` / `secrets.FF_MERGE_PRIVATE_KEY`. Existing callers across the org currently use inconsistent
-> names (`client-id`/`app-key`, or `app-id`/`app-key` with `FF_APP_ID`/`FF_APP_KEY`); align them to the names above when
-> migrating to these reusable workflows. The macOS notarization secrets follow the same convention: `macos-sign-p12` ←
-> `secrets.MACOS_SIGN_P12`, `macos-sign-password` ← `MACOS_SIGN_PASSWORD`, `macos-notary-issuer-id` ←
-> `MACOS_NOTARY_ISSUER_ID`, `macos-notary-key-id` ← `MACOS_NOTARY_KEY_ID`, `macos-notary-key` ← `MACOS_NOTARY_KEY`.
+> **Note on App input names.** This library's contract is secrets `app-client-id` + `app-private-key`, backed by
+> `secrets.FF_MERGE_CLIENT_ID` / `secrets.FF_MERGE_PRIVATE_KEY`. The old `app-client-id` input still works but is
+> deprecated. Existing callers across the org currently use inconsistent names (`client-id`/`app-key`, or
+> `app-id`/`app-key` with `FF_APP_ID`/`FF_APP_KEY`); align them to the names above when migrating to these reusable
+> workflows. The macOS notarization secrets follow the same convention: `macos-sign-p12` ← `secrets.MACOS_SIGN_P12`,
+> `macos-sign-password` ← `MACOS_SIGN_PASSWORD`, `macos-notary-issuer-id` ← `MACOS_NOTARY_ISSUER_ID`,
+> `macos-notary-key-id` ← `MACOS_NOTARY_KEY_ID`, `macos-notary-key` ← `MACOS_NOTARY_KEY`.
 
 ## macOS notarization: org setup
 
