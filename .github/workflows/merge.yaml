@@ -66,8 +66,10 @@ on:
   workflow_call:
     inputs:
       app-client-id:
-        description: The client id of the github app used to perform the merge (vars.FF_MERGE_CLIENT_ID)
-        required: true
+        description: >-
+          Deprecated: pass the client id as the app-client-id secret instead. Used only when that secret is empty.
+        required: false
+        default: ""
         type: string
       merge-command:
         description: The issue-comment body that triggers an immediate `/merge`.
@@ -108,6 +110,9 @@ on:
       app-private-key:
         description: The private key for the github app used to perform the merge (secrets.FF_MERGE_PRIVATE_KEY)
         required: true
+      app-client-id:
+        description: Client id of the github app used to perform the merge (secrets.FF_MERGE_CLIENT_ID).
+        required: false
 
 # every job authenticates with the App token; the job GITHUB_TOKENs are not used, so
 # callers keep permissions: {}. Ref moves are serialized per repo at the job level
@@ -133,7 +138,7 @@ jobs:
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
+          client-id: ${{ secrets.app-client-id || inputs.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
           # Least-privilege within the App's installation ceiling: ff-merge moves the
           # base ref (contents), reads/comments on the PR (pull-requests), resolves
@@ -185,7 +190,7 @@ jobs:
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
+          client-id: ${{ secrets.app-client-id || inputs.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
           # Labels and comments on the PR (pull-requests), closes the PR's linked
           # issues (issues), and moves the ref via the best-effort ff-merge (contents),
@@ -267,7 +272,7 @@ jobs:
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
+          client-id: ${{ secrets.app-client-id || inputs.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
           # ff-merge moves the ref (contents), reads the PR (pull-requests), closes the
           # PR's linked issues (issues), reads the head commit's status rollup — Checks-API
@@ -341,7 +346,7 @@ jobs:
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
+          client-id: ${{ secrets.app-client-id || inputs.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
           # ff-merge moves the ref (contents), reads the PR (pull-requests), closes the
           # PR's linked issues (issues), reads the head commit's status rollup — Checks-API
@@ -406,7 +411,7 @@ jobs:
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
+          client-id: ${{ secrets.app-client-id || inputs.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
           # read-only: only lists the open PRs carrying the arm label.
           permission-pull-requests: read
@@ -450,7 +455,7 @@ jobs:
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
+          client-id: ${{ secrets.app-client-id || inputs.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
           # ff-merge closes the PR's linked issues (issues) on a successful sweep merge,
           # alongside the ref move (contents), the workflow-file allowance (workflows),

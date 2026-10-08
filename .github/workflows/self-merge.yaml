@@ -41,7 +41,6 @@ permissions: {}
 jobs:
   merge:
     uses: $/.github/workflows/merge.yaml
-    with:
-      app-client-id: ${{ vars.FF_MERGE_CLIENT_ID }}
     secrets:
+      app-client-id: ${{ secrets.FF_MERGE_CLIENT_ID }}
       app-private-key: ${{ secrets.FF_MERGE_PRIVATE_KEY }}

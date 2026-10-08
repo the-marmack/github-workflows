@@ -7,7 +7,7 @@
 # the shared org "Roadmap" project alongside every other repo's issues.
 #
 # Org prerequisites (see README): the "Project Sync" App exposed as the
-# ADD_TO_PROJECT_CLIENT_ID variable + ADD_TO_PROJECT_PRIVATE_KEY secret.
+# ADD_TO_PROJECT_CLIENT_ID + ADD_TO_PROJECT_PRIVATE_KEY secrets.
 
 name: Add to Project
 
@@ -23,6 +23,6 @@ jobs:
     uses: $/.github/workflows/add-to-project.yaml
     with:
       project-url: https://github.com/orgs/the-marmack/projects/1
-      app-client-id: ${{ vars.ADD_TO_PROJECT_CLIENT_ID }}
     secrets:
+      app-client-id: ${{ secrets.ADD_TO_PROJECT_CLIENT_ID }}
       app-private-key: ${{ secrets.ADD_TO_PROJECT_PRIVATE_KEY }}
