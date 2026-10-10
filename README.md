@@ -26,6 +26,7 @@ action is pinned to a full commit SHA; the org Renovate bot
 | [`merge-notice.yaml`](#merge-noticeyaml)         | any      | posts a one-time "this repo merges via `/merge`" comment on new PRs                                                                                          |
 | [`add-to-project.yaml`](#add-to-projectyaml)     | any      | adds newly opened issues to a shared org Projects v2 board via a "Project Sync" App token                                                                    |
 | [`renovate.yaml`](#renovateyaml)                 | any      | per-repository Renovate run — the org bot's App, config and preset on this repo's own schedule, plus instant runs on a dashboard / PR checkbox tick          |
+| [`intent-check.yaml`](#intent-checkyaml)         | any      | runs the intent plugin's gate script on the intents a push changed and reports them in the run summary; never blocks                                         |
 
 Each workflow below lists its inputs, secrets, and the permission ceiling the **caller** must grant — a reusable
 workflow's jobs cannot exceed the permissions of the job that calls them. The snippet is the minimal caller; follow the
@@ -359,6 +360,35 @@ jobs:
 ```
 
 Full example: [`examples/renovate.yaml`](examples/renovate.yaml).
+
+### `intent-check.yaml`
+
+_PM intent repos (`the-marmack/intent-<login>`)._ On a push, runs the `intent` plugin's gate script
+(`intent-bundle/scripts/check.py --ready`, fetched from `the-marmack/skills` at `skills-ref`) on every
+`intents/*/intent.md` the push added or changed, and writes a table to the run summary, with a warning annotation per
+failing file. **Information only:** the job always succeeds, so a push with a broken intent still lands. Planning
+(`plan-create`) runs the same gate before it locks an intent.
+
+- **Inputs:** `skills-ref` — required; a full commit SHA (or tag) of `the-marmack/skills`.
+- **Secrets:** none (`the-marmack/skills` is public).
+- **Permissions (caller grants):** `contents: read`.
+
+```yaml
+on:
+  push:
+    branches: [main]
+    paths: ["intents/**"]
+permissions:
+  contents: read
+jobs:
+  check:
+    uses: the-marmack/github-workflows/.github/workflows/intent-check.yaml@v6
+    with:
+      skills-ref: <the-marmack/skills commit SHA>
+```
+
+Full example: [`examples/intent-check.yaml`](examples/intent-check.yaml). The intent plugin's `/intent-repo-setup` adds
+this caller to each PM repo.
 
 ## Consumer contracts
 

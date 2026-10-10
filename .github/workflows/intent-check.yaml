@@ -1,0 +1,87 @@
+# Copyright 2026 the-marmack
+# SPDX-License-Identifier: MIT
+
+# Reusable intent check — on a push to a PM's intent repo (the-marmack/intent-<login>),
+# runs the intent plugin's gate script (intent-bundle/scripts/check.py --ready) on every
+# intents/*/intent.md the push added or changed, and writes the results to the run
+# summary. It is information only: the job never fails, so a push with a broken intent
+# still lands. Planning (plan-create) runs the same gate before it locks an intent.
+#
+# The script comes from the-marmack/skills at `skills-ref`, which the caller pins to a
+# full commit SHA (Renovate keeps it current), so the check matches a known version of
+# the contract. That repo is public, so no token is needed to fetch it.
+
+name: Reusable Intent Check
+
+on:
+  workflow_call:
+    inputs:
+      skills-ref:
+        description: Full commit SHA (or tag) of the-marmack/skills whose intent-bundle gate script to run.
+        required: true
+        type: string
+
+permissions: {} # granted on the job
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      # read the pushed intents
+      contents: read
+    steps:
+      - name: Check out the intent repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # to diff the push
+          persist-credentials: false
+
+      - name: Fetch the gate script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: the-marmack/skills
+          ref: ${{ inputs.skills-ref }}
+          path: .intent-check-skills
+          sparse-checkout: plugins/intent/skills/intent-bundle/scripts
+          persist-credentials: false
+
+      - name: Check the changed intents
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          SCRIPT: .intent-check-skills/plugins/intent/skills/intent-bundle/scripts/check.py
+        run: |
+          set -u
+          # The files this push added or changed; all of them on a new branch or a first push.
+          if [ -n "${BEFORE:-}" ] && ! printf '%s' "$BEFORE" | grep -q '^0*$' \
+            && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            files=$(git diff --name-only --diff-filter=AM "$BEFORE" "$AFTER" -- 'intents/*/intent.md')
+          else
+            files=$(git ls-files 'intents/*/intent.md')
+          fi
+
+          {
+            echo "## Intent check"
+            echo
+            if [ -z "$files" ]; then
+              echo "No \`intent.md\` was added or changed in this push."
+            else
+              echo "| Intent | Ready gate | Problems |"
+              echo "| --- | --- | --- |"
+              for f in $files; do
+                out=$(python3 "$SCRIPT" --ready < "$f" 2>/dev/null)
+                problems=$(printf '%s' "$out" | python3 -c '
+          import json, sys
+          try:
+              d = json.load(sys.stdin)
+          except ValueError:
+              print("the gate script did not run"); raise SystemExit
+          print("<br>".join(e.replace("|", "\\|") for e in d["errors"]) or "—")')
+                if [ "$problems" = "—" ]; then gate="pass"; else gate="**fail**"; echo "::warning file=$f::intent check: $problems" >&2; fi
+                echo "| \`$f\` | $gate | $problems |"
+              done
+            fi
+            echo
+            echo "_Information only: this check never blocks a push. Planning runs the same gate before it locks an intent._"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0

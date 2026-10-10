@@ -1,0 +1,28 @@
+# Copyright 2026 the-marmack
+# SPDX-License-Identifier: MIT
+
+# Caller workflow — copy to `.github/workflows/intent-check.yaml` in a PM's intent repo
+# (the-marmack/intent-<login>); the intent plugin's /intent-repo-setup adds it for you.
+# On every push to main that touches intents/, it runs the intent gate script on the
+# intent.md files the push changed and reports them in the run summary. Information
+# only: it never blocks a push.
+#
+# skills-ref pins the-marmack/skills (the gate script's source) to a full commit SHA;
+# Renovate keeps it current. Replace the all-zeros placeholder SHA below with the full
+# commit SHA of the github-workflows release you want — see README "Pinning".
+
+name: Intent Check
+
+on:
+  push:
+    branches: [main]
+    paths: ["intents/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    uses: the-marmack/github-workflows/.github/workflows/intent-check.yaml@0000000000000000000000000000000000000000 # v6.4.0 # x-release-please-version
+    with:
+      skills-ref: 0b3a43c5dffb9967723fa29313e31512c070482c # main
