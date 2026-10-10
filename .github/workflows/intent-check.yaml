@@ -51,7 +51,8 @@ jobs:
           AFTER: ${{ github.sha }}
           SCRIPT: .intent-check-skills/plugins/intent/skills/intent-bundle/scripts/check.py
         run: |
-          set -u
+          # GitHub runs this with bash -e -o pipefail; a failing intent must not stop the step.
+          set +e +o pipefail -u
           # The files this push added or changed; all of them on a new branch or a first push.
           if [ -n "${BEFORE:-}" ] && ! printf '%s' "$BEFORE" | grep -q '^0*$' \
             && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
