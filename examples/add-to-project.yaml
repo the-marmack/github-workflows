@@ -24,7 +24,7 @@ permissions: {}
 
 jobs:
   add:
-    uses: the-marmack/github-workflows/.github/workflows/add-to-project.yaml@0000000000000000000000000000000000000000 # v6.5.0 # x-release-please-version
+    uses: the-marmack/github-workflows/.github/workflows/add-to-project.yaml@0000000000000000000000000000000000000000 # v6.5.1 # x-release-please-version
     with:
       project-url: https://github.com/orgs/the-marmack/projects/1
     secrets:

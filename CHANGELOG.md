@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.5.1](https://github.com/the-marmack/github-workflows/compare/v6.5.0...v6.5.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* intent-check never fails the step on a failing intent ([3bdf19a](https://github.com/the-marmack/github-workflows/commit/3bdf19ab38f3e6117bc65a53739999e4e0db8d77))
+
 ## [6.5.0](https://github.com/the-marmack/github-workflows/compare/v6.4.0...v6.5.0) (2026-10-10)
 
 
