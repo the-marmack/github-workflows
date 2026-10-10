@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.5.0](https://github.com/the-marmack/github-workflows/compare/v6.4.0...v6.5.0) (2026-10-10)
+
+
+### Features
+
+* add the intent-check reusable workflow ([db6b9e1](https://github.com/the-marmack/github-workflows/commit/db6b9e1fb6344e7627d6fc48c62050842af752b9))
+
 ## [6.4.0](https://github.com/the-marmack/github-workflows/compare/v6.3.0...v6.4.0) (2026-10-08)
 
 

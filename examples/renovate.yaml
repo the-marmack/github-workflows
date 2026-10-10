@@ -59,7 +59,7 @@ permissions: {}
 
 jobs:
   renovate:
-    uses: the-marmack/github-workflows/.github/workflows/renovate.yaml@0000000000000000000000000000000000000000 # v6.4.0 # x-release-please-version
+    uses: the-marmack/github-workflows/.github/workflows/renovate.yaml@0000000000000000000000000000000000000000 # v6.5.0 # x-release-please-version
     with:
       dry-run: ${{ inputs.dry-run || '' }}
       log-level: ${{ inputs.log-level || 'info' }}

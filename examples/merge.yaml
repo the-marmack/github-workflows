@@ -53,7 +53,7 @@ permissions: {}
 
 jobs:
   merge:
-    uses: the-marmack/github-workflows/.github/workflows/merge.yaml@0000000000000000000000000000000000000000 # v6.4.0 # x-release-please-version
+    uses: the-marmack/github-workflows/.github/workflows/merge.yaml@0000000000000000000000000000000000000000 # v6.5.0 # x-release-please-version
     # with:
     # merge-command: /merge     # default — the comment that merges now
     # arm-command: /auto-merge  # default — the comment that arms auto-merge
