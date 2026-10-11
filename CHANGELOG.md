@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.6.0](https://github.com/the-marmack/github-workflows/compare/v6.5.1...v6.6.0) (2026-10-11)
+
+
+### Features
+
+* intent-check flags edits to locked intents ([312012b](https://github.com/the-marmack/github-workflows/commit/312012b424c76791c56bca76cf34acfb9daa0a48))
+
 ## [6.5.1](https://github.com/the-marmack/github-workflows/compare/v6.5.0...v6.5.1) (2026-10-10)
 
 
