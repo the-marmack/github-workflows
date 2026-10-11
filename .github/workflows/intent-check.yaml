@@ -4,12 +4,22 @@
 # Reusable intent check — on a push to a PM's intent repo (the-marmack/intent-<login>),
 # runs the intent plugin's gate script (intent-bundle/scripts/check.py --ready) on every
 # intents/*/intent.md the push added or changed, and writes the results to the run
-# summary. It is information only: the job never fails, so a push with a broken intent
-# still lands. Planning (plan-create) runs the same gate before it locks an intent.
+# summary. The gate is information only: a push with a broken intent still lands, and
+# planning (plan-create) runs the same gate before it locks an intent.
+#
+# It also flags edits to locked intents. An intent is locked once planning has written
+# intents/<login>-<issue>-<short>/lock.yaml to the-marmack/intents; planning reads the
+# intent at the locked commit, so a later edit on main is never planned. When the push
+# changed a locked intent, the job comments on the intent's issue and fails, so the edit
+# shows as a red check. It can't be blocked: rulesets aren't enforced on private repos
+# on the free plan.
 #
 # The script comes from the-marmack/skills at `skills-ref`, which the caller pins to a
 # full commit SHA (Renovate keeps it current), so the check matches a known version of
-# the contract. That repo is public, so no token is needed to fetch it.
+# the contract. That repo is public, so no token is needed to fetch it. Reading the
+# private the-marmack/intents and commenting use a short-lived token from the board
+# GitHub App (contents read, issues write), passed as optional secrets; without them
+# the lock check is skipped and the summary says so.
 
 name: Reusable Intent Check
 
@@ -20,6 +30,13 @@ on:
         description: Full commit SHA (or tag) of the-marmack/skills whose intent-bundle gate script to run.
         required: true
         type: string
+    secrets:
+      app-client-id:
+        description: Client id of the board GitHub App (contents read, issues write); enables the lock check.
+        required: false
+      app-private-key:
+        description: Private key of the board GitHub App; enables the lock check.
+        required: false
 
 permissions: {} # granted on the job
 
@@ -29,6 +46,9 @@ jobs:
     permissions:
       # read the pushed intents
       contents: read
+    env:
+      # secrets can't be tested in a step's if:, so expose whether the App key was passed
+      HAS_APP: ${{ secrets.app-private-key != '' }}
     steps:
       - name: Check out the intent repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,11 +65,31 @@ jobs:
           sparse-checkout: plugins/intent/skills/intent-bundle/scripts
           persist-credentials: false
 
+      - name: Mint a token for the lock check
+        id: app-token
+        if: env.HAS_APP == 'true'
+        # a failure (for example the App lacks contents read) makes the lock check report
+        # "not checked" instead of failing the run
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          owner: ${{ github.repository_owner }}
+          # the locks live in <owner>/intents; the comment goes on this repo's issue
+          repositories: intents,${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: write
+
       - name: Check the changed intents
         env:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
           SCRIPT: .intent-check-skills/plugins/intent/skills/intent-bundle/scripts/check.py
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          SERVER: ${{ github.server_url }}
         run: |
           # GitHub runs this with bash -e -o pipefail; a failing intent must not stop the step.
           set +e +o pipefail -u
@@ -61,14 +101,31 @@ jobs:
             files=$(git ls-files 'intents/*/intent.md')
           fi
 
+          # Lock state of one intent folder: locked (lock.yaml saved to $lockfile),
+          # unlocked, or "not checked" when there's no token or GitHub can't be read.
+          login=${REPO#intent-}
+          lockfile=$(mktemp)
+          lock_state() {
+            if [ -z "${GH_TOKEN:-}" ]; then echo "not checked"; return; fi
+            code=$(curl -sS -o "$lockfile" -w '%{http_code}' \
+              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw" \
+              "${GITHUB_API_URL}/repos/$OWNER/intents/contents/intents/$login-$1/lock.yaml")
+            case "$code" in
+              200) echo locked ;;
+              404) echo unlocked ;;
+              *) echo "not checked" ;;
+            esac
+          }
+
+          locked_any=0
           {
             echo "## Intent check"
             echo
             if [ -z "$files" ]; then
               echo "No \`intent.md\` was added or changed in this push."
             else
-              echo "| Intent | Ready gate | Problems |"
-              echo "| --- | --- | --- |"
+              echo "| Intent | Ready gate | Problems | Lock |"
+              echo "| --- | --- | --- | --- |"
               for f in $files; do
                 out=$(python3 "$SCRIPT" --ready < "$f" 2>/dev/null)
                 problems=$(printf '%s' "$out" | python3 -c '
@@ -79,10 +136,30 @@ jobs:
               print("the gate script did not run"); raise SystemExit
           print("<br>".join(e.replace("|", "\\|") for e in d["errors"]) or "—")')
                 if [ "$problems" = "—" ]; then gate="pass"; else gate="**fail**"; echo "::warning file=$f::intent check: $problems" >&2; fi
-                echo "| \`$f\` | $gate | $problems |"
+
+                folder=$(basename "$(dirname "$f")")
+                issue=${folder%%-*}
+                lock=$(lock_state "$folder")
+                if [ "$lock" = locked ]; then
+                  locked_any=1
+                  by=$(sed -n 's/^locked_by: *//p' "$lockfile")
+                  at=$(sed -n 's/^locked_at: *//p' "$lockfile")
+                  sha=$(sed -n 's/^sha: *//p' "$lockfile")
+                  echo "::error file=$f::This intent is locked (planning started $at). The edit won't be planned." >&2
+                  body=$(printf '%s\n' \
+                    "**This intent is locked, so this edit won't be planned.**" \
+                    "" \
+                    "Planning started on $at (by @$by) and uses \`intent.md\` as it was at ${sha:0:7}. Commit ${AFTER:0:7} changed it on \`main\` afterwards; that change is ignored." \
+                    "" \
+                    "To change the intent, start a new one that supersedes it: \`/intent-create … supersedes $SERVER/$OWNER/$REPO/issues/$issue\`. To drop it, close this issue as not planned.")
+                  gh issue comment "$issue" -R "$OWNER/$REPO" --body "$body" >/dev/null 2>&1 \
+                    || echo "::warning file=$f::couldn't comment on issue #$issue" >&2
+                  lock="**locked**: edit not planned"
+                fi
+                echo "| \`$f\` | $gate | $problems | $lock |"
               done
             fi
             echo
-            echo "_Information only: this check never blocks a push. Planning runs the same gate before it locks an intent._"
+            echo "_The ready gate is information only. A change to a locked intent fails this check: planning uses the locked version._"
           } >> "$GITHUB_STEP_SUMMARY"
-          exit 0
+          exit "$locked_any"

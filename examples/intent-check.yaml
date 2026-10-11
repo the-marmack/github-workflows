@@ -4,8 +4,13 @@
 # Caller workflow — copy to `.github/workflows/intent-check.yaml` in a PM's intent repo
 # (the-marmack/intent-<login>); the intent plugin's /intent-repo-setup adds it for you.
 # On every push to main that touches intents/, it runs the intent gate script on the
-# intent.md files the push changed and reports them in the run summary. Information
-# only: it never blocks a push.
+# intent.md files the push changed and reports them in the run summary (information
+# only). If the push changed a locked intent, it comments on the intent's issue and
+# fails, so the edit shows as a red check; it can't block the push.
+#
+# The lock check reads the-marmack/intents and comments with the board App, whose client
+# id and key are this repo's INTENT_LOCK_CLIENT_ID and INTENT_LOCK_PRIVATE_KEY secrets
+# (the App needs contents read and issues write). Without them it's skipped.
 #
 # skills-ref pins the-marmack/skills (the gate script's source) to a full commit SHA;
 # Renovate keeps it current. Replace the all-zeros placeholder SHA below with the full
@@ -26,3 +31,6 @@ jobs:
     uses: the-marmack/github-workflows/.github/workflows/intent-check.yaml@0000000000000000000000000000000000000000 # v6.5.1 # x-release-please-version
     with:
       skills-ref: 0b3a43c5dffb9967723fa29313e31512c070482c # main
+    secrets:
+      app-client-id: ${{ secrets.INTENT_LOCK_CLIENT_ID }}
+      app-private-key: ${{ secrets.INTENT_LOCK_PRIVATE_KEY }}
